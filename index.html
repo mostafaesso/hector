@@ -43,6 +43,7 @@
 <body>
 <header>
   <h1>Hector <span>live voice chat</span></h1>
+  <span id="build" style="color:var(--muted);font-size:11px"></span>
 </header>
 
 <div id="log"></div>
@@ -192,6 +193,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
+document.getElementById('build').textContent = 'v6' + (IOS ? ' · iPhone mode' : '');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
