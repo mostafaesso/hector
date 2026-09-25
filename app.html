@@ -202,6 +202,18 @@ function listen() {
 const voice = t => fetch('https://n8n.srv1508505.hstgr.cloud/webhook/hector-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ id: t }) }).then(r => { if (!r.ok) throw new Error('voice failed'); return r.blob(); });
 
+// A short "One moment." in Mostafa's voice plays right away, so the wait for the real reply feels instant
+const ACKS = [1, 2, 3, 4, 5, 6].map(i => `acks/ack${i}.mp3`);
+function playAck() {
+  return new Promise(resolve => {
+    audio = player;
+    player.onended = player.onpause = () => resolve();
+    player.src = ACKS[Math.floor(Math.random() * ACKS.length)];
+    player.play().catch(() => resolve());
+    setTimeout(resolve, 2500);
+  });
+}
+
 function play(blob) {
   return new Promise(resolve => {
     audio = player;
@@ -218,6 +230,7 @@ async function talk(text) {
   const my = ++turn;                         // a newer turn cancels this one
   add('me', text); setState('thinking');
   const t0 = performance.now();
+  const ackDone = playAck();
   try {
     const r = await fetch('https://n8n.srv1508505.hstgr.cloud/webhook/hector-think', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, history }) });
@@ -231,6 +244,7 @@ async function talk(text) {
     const clips = (d.clips || []).map(voice);
     for (let i = 0; i < clips.length; i++) {
       const blob = await clips[i];
+      if (i === 0) { await ackDone; if (my !== turn) return; }
       if (i === 0) { const s = document.createElement('small'); s.textContent = `first words after ${((performance.now() - t0) / 1000).toFixed(1)}s`; bubble.appendChild(s); setState('speaking'); }
       if (my !== turn || state !== 'speaking') break;   // interrupted
       await play(blob);
@@ -257,7 +271,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-document.getElementById('build').textContent = 'v7' + (IOS ? ' · iPhone mode' : '');
+document.getElementById('build').textContent = 'v8' + (IOS ? ' · iPhone mode' : '');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
