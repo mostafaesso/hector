@@ -121,12 +121,78 @@ function ensureRec() {
   };
 }
 function startRec() { ensureRec(); if (!recRunning) { rec.start(); recRunning = true; } }
-function stopRec() { active = false; clearTimeout(silenceTimer); if (rec) rec.abort(); }
+function stopRec() { active = false; clearTimeout(silenceTimer); clearInterval(vadTimer); if (rec) rec.abort(); stopStream(); }
+
+// iPhone path: record with the mic directly, detect the pause ourselves, transcribe on the server.
+const HEAR_URL = 'https://n8n.srv1508505.hstgr.cloud/webhook/hector-hear';
+let stream = null, actx = null, recorder = null, vadTimer = null;
+function stopStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
+const blobToBase64 = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
+
+async function listenRecorder() {
+  setState('listening');
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') await actx.resume().catch(() => {});
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (err) {
+    active = false;
+    return everStarted ? yourTurn() : setState('idle', 'Microphone blocked. Allow it, then tap Start.');
+  }
+  if (!active || state !== 'listening') { stopStream(); return; }
+  everStarted = true;
+  statusEl.textContent = "Go ahead, I'm listening… (mic is on)";
+  const an = actx.createAnalyser(); an.fftSize = 1024; actx.createMediaStreamSource(stream).connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  const mime = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+  let chunks = [];
+  const startRecording = () => {
+    chunks = [];
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    recorder.start();
+  };
+  startRecording();
+  let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0;
+  const STEP = 50;
+  vadTimer = setInterval(() => {
+    if (!active || state !== 'listening') { clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); return; }
+    an.getByteTimeDomainData(buf);
+    let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+    const rms = Math.sqrt(sum / buf.length);
+    if (rms > 0.03) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; } else { loudMs = 0; quietMs += STEP; }
+    if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
+    if (speaking && quietMs >= 900) { clearInterval(vadTimer); finish(); }            // you paused: your turn is over
+    else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
+  }, STEP);
+
+  function finish() {
+    recorder.onstop = async () => {
+      stopStream();
+      const blob = new Blob(chunks, { type: recorder.mimeType || mime });
+      setState('thinking', 'Got it…');
+      try {
+        const r = await fetch(HEAR_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audio: await blobToBase64(blob), format: /mp4|aac|m4a/.test(blob.type) ? 'm4a' : 'webm' }) });
+        const d = await r.json();
+        if (interimEl) { interimEl.remove(); interimEl = null; }
+        const text = (d.text || '').trim();
+        if (text) talk(text); else active ? listen() : setState('idle');
+      } catch (err) {
+        if (interimEl) { interimEl.remove(); interimEl = null; }
+        add('err', 'Error: ' + err.message);
+        active ? listen() : setState('idle');
+      }
+    };
+    recorder.stop();
+  }
+}
 
 function yourTurn() { setState('idle', 'Your turn: tap the circle and talk.'); orb.textContent = 'Tap to talk'; }
 
 function listen() {
   if (!active) return setState('idle');
+  if (IOS && window.MediaRecorder) return listenRecorder();
   if (!SR) { setState('idle', 'Voice input needs Chrome, Edge or Safari. You can still type below.'); active = false; return; }
   consumed = resultsLen; lastHeard = '';              // drop anything heard while Hector was talking
   setState('listening');
@@ -165,7 +231,6 @@ async function talk(text) {
     const clips = (d.clips || []).map(voice);
     for (let i = 0; i < clips.length; i++) {
       const blob = await clips[i];
-      if (i === 0 && IOS) stopRec();            // iPhone: the mic can't stay on while audio plays
       if (i === 0) { const s = document.createElement('small'); s.textContent = `first words after ${((performance.now() - t0) / 1000).toFixed(1)}s`; bubble.appendChild(s); setState('speaking'); }
       if (my !== turn || state !== 'speaking') break;   // interrupted
       await play(blob);
@@ -176,7 +241,6 @@ async function talk(text) {
   }
   if (my !== turn) return;
   audio = null;
-  if (IOS && (state === 'speaking' || state === 'thinking' || state === 'idle')) return yourTurn();
   if (state === 'speaking' || state === 'thinking') active ? listen() : setState('idle');
 }
 
@@ -193,7 +257,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-document.getElementById('build').textContent = 'v6' + (IOS ? ' · iPhone mode' : '');
+document.getElementById('build').textContent = 'v7' + (IOS ? ' · iPhone mode' : '');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
