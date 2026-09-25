@@ -50,7 +50,6 @@
 <footer>
   <button id="orb">Start</button>
   <div id="status">Press Start, then just talk. Hector answers in English and keeps listening.</div>
-  <div style="color:var(--muted);font-size:12px;text-align:center">Chats with Hector are shared with Mostafa. On iPhone, turn off silent mode to hear him.</div>
   <form id="typed"><input id="text" placeholder="…or type here" autocomplete="off"><button>Send</button></form>
 </footer>
 
@@ -79,6 +78,8 @@ function add(cls, text, note) {
 
 // One mic session for the whole conversation. Phones won't let a page restart the mic
 // without a tap, so we never stop it between turns; we just ignore what it hears while Hector talks.
+// iPhones switch the mic off whenever audio plays and won't let a page switch it back on without a tap.
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let recRunning = false, everStarted = false, consumed = 0, resultsLen = 0, silenceTimer = null, lastHeard = '';
 
 function ensureRec() {
@@ -106,6 +107,7 @@ function ensureRec() {
       active = false;
       setState('idle', everStarted ? 'Tap Start to keep talking.' : 'Microphone blocked. Allow it in the address bar, then press Start.');
     }
+    else if (e.error === 'audio-capture' && everStarted) { active = false; yourTurn(); }
     else if (e.error === 'audio-capture') { active = false; setState('idle', 'No microphone found, or another tab is using it. Close other Hector tabs and press Start.'); }
     else if (e.error === 'network') { active = false; setState('idle', 'Speech recognition could not reach the internet. Check your connection, or type below.'); }
     else if (e.error !== 'no-speech' && e.error !== 'aborted') statusEl.textContent = 'Mic issue: ' + e.error;
@@ -119,6 +121,8 @@ function ensureRec() {
 }
 function startRec() { ensureRec(); if (!recRunning) { rec.start(); recRunning = true; } }
 function stopRec() { active = false; clearTimeout(silenceTimer); if (rec) rec.abort(); }
+
+function yourTurn() { setState('idle', 'Your turn: tap the circle and talk.'); orb.textContent = 'Tap to talk'; }
 
 function listen() {
   if (!active) return setState('idle');
@@ -160,6 +164,7 @@ async function talk(text) {
     const clips = (d.clips || []).map(voice);
     for (let i = 0; i < clips.length; i++) {
       const blob = await clips[i];
+      if (i === 0 && IOS) stopRec();            // iPhone: the mic can't stay on while audio plays
       if (i === 0) { const s = document.createElement('small'); s.textContent = `first words after ${((performance.now() - t0) / 1000).toFixed(1)}s`; bubble.appendChild(s); setState('speaking'); }
       if (my !== turn || state !== 'speaking') break;   // interrupted
       await play(blob);
@@ -170,12 +175,13 @@ async function talk(text) {
   }
   if (my !== turn) return;
   audio = null;
+  if (IOS && (state === 'speaking' || state === 'thinking' || state === 'idle')) return yourTurn();
   if (state === 'speaking' || state === 'thinking') active ? listen() : setState('idle');
 }
 
 orb.onclick = () => {
   unlockAudio();
-  if (state === 'speaking') { active = true; setState('listening'); audio && audio.pause(); return listen(); }
+  if (state === 'speaking') { active = true; audio && audio.pause(); if (IOS) { turn++; audio = null; } setState('listening'); return listen(); }
   if (state === 'idle') { active = true; return listen(); }
   stopRec(); setState('idle');   // tap while listening = stop
 };
