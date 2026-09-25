@@ -77,30 +77,55 @@ function add(cls, text, note) {
   log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
 }
 
-function listen() {
-  if (!active) return setState('idle');
-  if (!SR) { setState('idle', 'Voice input needs Google Chrome. You can still type below.'); active = false; return; }
-  rec = new SR(); rec.lang = lang; rec.interimResults = true; rec.continuous = false;
-  let finalText = '';
+// One mic session for the whole conversation. Phones won't let a page restart the mic
+// without a tap, so we never stop it between turns; we just ignore what it hears while Hector talks.
+let recRunning = false, everStarted = false, consumed = 0, resultsLen = 0, silenceTimer = null, lastHeard = '';
+
+function ensureRec() {
+  if (rec) return;
+  rec = new SR(); rec.lang = lang; rec.interimResults = true; rec.continuous = true;
   rec.onresult = e => {
-    let interim = '';
-    for (const r of e.results) (r.isFinal ? (finalText = r[0].transcript) : (interim += r[0].transcript));
+    resultsLen = e.results.length;
+    if (state !== 'listening') { consumed = resultsLen; return; }   // that's Hector's own voice
+    let text = '';
+    for (let i = consumed; i < e.results.length; i++) text += e.results[i][0].transcript;
+    lastHeard = text.trim();
+    if (!lastHeard) return;
     if (!interimEl) interimEl = add('me interim', '');
-    interimEl.textContent = finalText || interim;
+    interimEl.textContent = lastHeard;
+    clearTimeout(silenceTimer);                       // a short pause ends your turn
+    silenceTimer = setTimeout(() => {
+      consumed = resultsLen;
+      if (interimEl) { interimEl.remove(); interimEl = null; }
+      const said = lastHeard; lastHeard = '';
+      if (said && state === 'listening') talk(said);
+    }, 1000);
   };
   rec.onerror = e => {
-    if (e.error === 'not-allowed') { active = false; setState('idle', 'Microphone blocked. Allow it in the address bar, then press Start.'); }
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      active = false;
+      setState('idle', everStarted ? 'Tap Start to keep talking.' : 'Microphone blocked. Allow it in the address bar, then press Start.');
+    }
     else if (e.error === 'audio-capture') { active = false; setState('idle', 'No microphone found, or another tab is using it. Close other Hector tabs and press Start.'); }
     else if (e.error === 'network') { active = false; setState('idle', 'Speech recognition could not reach the internet. Check your connection, or type below.'); }
     else if (e.error !== 'no-speech' && e.error !== 'aborted') statusEl.textContent = 'Mic issue: ' + e.error;
   };
-  rec.onaudiostart = () => { statusEl.textContent = "Go ahead, I'm listening… (mic is on)"; };
-  rec.onend = () => {
+  rec.onaudiostart = () => { everStarted = true; if (state === 'listening') statusEl.textContent = "Go ahead, I'm listening… (mic is on)"; };
+  rec.onend = () => {                                  // the browser closed the session: reopen it if we can
+    recRunning = false; rec = null; consumed = 0; resultsLen = 0; clearTimeout(silenceTimer);
     if (interimEl) { interimEl.remove(); interimEl = null; }
-    if (finalText.trim()) talk(finalText.trim());
-    else if (active && state === 'listening') listen();   // silence: keep listening
+    if (active) { try { startRec(); } catch (_) { active = false; setState('idle', 'Tap Start to keep talking.'); } }
   };
-  setState('listening'); rec.start();
+}
+function startRec() { ensureRec(); if (!recRunning) { rec.start(); recRunning = true; } }
+function stopRec() { active = false; clearTimeout(silenceTimer); if (rec) rec.abort(); }
+
+function listen() {
+  if (!active) return setState('idle');
+  if (!SR) { setState('idle', 'Voice input needs Chrome, Edge or Safari. You can still type below.'); active = false; return; }
+  consumed = resultsLen; lastHeard = '';              // drop anything heard while Hector was talking
+  setState('listening');
+  try { startRec(); } catch (_) { /* already running */ }
 }
 
 const voice = t => fetch('https://n8n.srv1508505.hstgr.cloud/webhook/hector-voice', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -152,17 +177,17 @@ orb.onclick = () => {
   unlockAudio();
   if (state === 'speaking') { active = true; setState('listening'); audio && audio.pause(); return listen(); }
   if (state === 'idle') { active = true; return listen(); }
-  active = false; rec && rec.abort(); setState('idle');   // tap while listening = stop
+  stopRec(); setState('idle');   // tap while listening = stop
 };
 document.getElementById('typed').onsubmit = e => {
   e.preventDefault(); unlockAudio(); const t = document.getElementById('text'); const v = t.value.trim();
   if (!v || state === 'thinking') return; t.value = '';
   if (audio) { audio.pause(); audio = null; }
-  rec && rec.abort(); talk(v);
+  talk(v);
 };
 setState('idle');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
-  if (document.hidden && state === 'listening') { active = false; rec && rec.abort(); setState('idle'); }
+  if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
 </script>
 </body>
