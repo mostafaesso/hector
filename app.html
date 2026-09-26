@@ -245,7 +245,7 @@ async function talk(text) {
   const my = ++turn;                         // a newer turn cancels this one
   add('me', text); setState('thinking');
   const t0 = performance.now();
-  const ackDone = playAck();
+  const ackDone = Promise.resolve();   // no filler phrase: Hector answers directly
   try {
     const r = await fetch('https://n8n.srv1508505.hstgr.cloud/webhook/hector-think', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, history, visitor: VISITOR, device: DEVICE, n: ++msgCount }) });
@@ -293,7 +293,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v13';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v14';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
