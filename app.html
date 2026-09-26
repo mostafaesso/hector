@@ -182,8 +182,8 @@ async function listenRecorder() {
     }
     if (rms > (speaking ? KEEP : START)) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; if (speaking) spokenMs += STEP; } else { loudMs = 0; quietMs += STEP; }
     if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
-    if (speaking && quietMs >= 2000 && spokenMs < 500) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
-    else if (speaking && quietMs >= 2000) { clearInterval(vadTimer); finish(); }      // a 2 second pause ends your turn
+    if (speaking && quietMs >= 1300 && spokenMs < 400) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
+    else if (speaking && quietMs >= 1300) { clearInterval(vadTimer); finish(); }      // a 1.3 second pause ends your turn (or tap to send sooner)
     else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
   }, STEP);
 
@@ -302,7 +302,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v16';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v17';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
