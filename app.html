@@ -163,7 +163,7 @@ async function listenRecorder() {
     recorder.start();
   };
   startRecording();
-  let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0, maxRms = 0, elapsed = 0;
+  let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0, maxRms = 0, elapsed = 0, spokenMs = 0;
   const STEP = 50;
   vadTimer = setInterval(() => {
     if (!active || state !== 'listening') { clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); return; }
@@ -174,9 +174,10 @@ async function listenRecorder() {
     if (elapsed === 1500 && maxRms < 0.002) {            // no signal at all: the mic went to sleep, ask for a tap
       clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); active = false; return yourTurn();
     }
-    if (rms > 0.03) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; } else { loudMs = 0; quietMs += STEP; }
+    if (rms > 0.03) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; if (speaking) spokenMs += STEP; } else { loudMs = 0; quietMs += STEP; }
     if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
-    if (speaking && quietMs >= 900) { clearInterval(vadTimer); finish(); }            // you paused: your turn is over
+    if (speaking && quietMs >= 1700 && spokenMs < 500) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
+    else if (speaking && quietMs >= 1700) { clearInterval(vadTimer); finish(); }      // a 1.7 second pause ends your turn
     else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
   }, STEP);
 
@@ -206,7 +207,7 @@ function yourTurn() { setState('idle', 'Your turn: tap the circle and talk.'); o
 
 function listen() {
   if (!active) return setState('idle');
-  if (IOS && window.MediaRecorder) return listenRecorder();
+  if (window.MediaRecorder && navigator.mediaDevices) return listenRecorder();
   if (!SR) { setState('idle', 'Voice input needs Chrome, Edge or Safari. You can still type below.'); active = false; return; }
   consumed = resultsLen; lastHeard = '';              // drop anything heard while Hector was talking
   setState('listening');
@@ -292,7 +293,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v12';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v13';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
