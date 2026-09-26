@@ -141,8 +141,10 @@ async function listenRecorder() {
   setState('listening');
   try {
     if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') await actx.resume().catch(() => {});
+    if (actx.state !== 'running') await actx.resume().catch(() => {});
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    if (actx.state !== 'running') await actx.resume().catch(() => {});
+    if (actx.state !== 'running') throw new Error('audio asleep');   // iPhone put audio to sleep: needs a tap
   } catch (err) {
     active = false;
     return everStarted ? yourTurn() : setState('idle', 'Microphone blocked. Allow it, then tap Start.');
@@ -161,13 +163,17 @@ async function listenRecorder() {
     recorder.start();
   };
   startRecording();
-  let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0;
+  let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0, maxRms = 0, elapsed = 0;
   const STEP = 50;
   vadTimer = setInterval(() => {
     if (!active || state !== 'listening') { clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); return; }
     an.getByteTimeDomainData(buf);
     let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
     const rms = Math.sqrt(sum / buf.length);
+    maxRms = Math.max(maxRms, rms); elapsed += STEP;
+    if (elapsed === 1500 && maxRms < 0.002) {            // no signal at all: the mic went to sleep, ask for a tap
+      clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); active = false; return yourTurn();
+    }
     if (rms > 0.03) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; } else { loudMs = 0; quietMs += STEP; }
     if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
     if (speaking && quietMs >= 900) { clearInterval(vadTimer); finish(); }            // you paused: your turn is over
@@ -286,7 +292,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-document.getElementById('build').textContent = 'v10' + (IOS ? ' · iPhone mode' : '');
+document.getElementById('build').textContent = 'v11' + (IOS ? ' · iPhone mode' : '');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
