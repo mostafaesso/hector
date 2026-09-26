@@ -72,6 +72,7 @@ let VISITOR = '';
 try { VISITOR = localStorage.getItem('hector_visitor') || ''; if (!VISITOR) { VISITOR = newId(); localStorage.setItem('hector_visitor', VISITOR); } }
 catch (e) { VISITOR = newId(); }
 let msgCount = 0;
+let PAUSE_MS = 1300;  // silence that ends your turn; Telegram /pause changes it
 let turn = 0, active = false, state = 'idle', history = [], rec = null, audio = null, interimEl = null;
 
 function setState(s, msg) {
@@ -182,8 +183,8 @@ async function listenRecorder() {
     }
     if (rms > (speaking ? KEEP : START)) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; if (speaking) spokenMs += STEP; } else { loudMs = 0; quietMs += STEP; }
     if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
-    if (speaking && quietMs >= 1300 && spokenMs < 400) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
-    else if (speaking && quietMs >= 1300) { clearInterval(vadTimer); finish(); }      // a 1.3 second pause ends your turn (or tap to send sooner)
+    if (speaking && quietMs >= PAUSE_MS && spokenMs < 400) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
+    else if (speaking && quietMs >= PAUSE_MS) { clearInterval(vadTimer); finish(); }  // your pause ends the turn (or tap to send sooner)
     else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
   }, STEP);
 
@@ -260,6 +261,7 @@ async function talk(text) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.statusText);
     if (my !== turn) return;
+    if (typeof d.pause === 'number') PAUSE_MS = Math.round(d.pause * 1000);
     history.push({ role: 'user', content: text }, { role: 'assistant', content: d.reply });
     history = history.slice(-12);
     const bubble = add('him', d.reply);
@@ -302,7 +304,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v17';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v18';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
