@@ -42,8 +42,8 @@
 </head>
 <body>
 <header>
-  <h1>Hector <span>live voice chat</span></h1>
-  <span id="build" style="color:var(--muted);font-size:11px"></span>
+  <h1>Hector</h1>
+  <span style="font-size:11px;color:var(--muted)"><span id="build"></span> <a id="update" href="#" hidden style="color:var(--listen);margin-left:6px">New version, please refresh</a></span>
 </header>
 
 <div id="log"></div>
@@ -292,7 +292,14 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-document.getElementById('build').textContent = 'v11' + (IOS ? ' · iPhone mode' : '');
+const BUILD = 'v12';  // bump on every published change; version.txt on the site must match
+document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
+// Check every minute whether a newer version is live, and offer a refresh
+const upd = document.getElementById('update');
+upd.onclick = e => { e.preventDefault(); location.reload(); };
+const checkVersion = () => fetch('version.txt?t=' + Date.now(), { cache: 'no-store' })
+  .then(r => r.ok ? r.text() : '').then(v => { v = v.trim(); if (/^v\d+$/.test(v) && v !== BUILD) upd.hidden = false; }).catch(() => {});
+setInterval(checkVersion, 60000); checkVersion();
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
