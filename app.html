@@ -50,12 +50,14 @@
 
 <footer>
   <button id="orb">Start</button>
+  <div style="width:120px;height:4px;border-radius:2px;background:var(--panel);overflow:hidden"><div id="meter" style="height:100%;width:0;background:var(--listen);transition:width .08s"></div></div>
   <div id="status">Press Start, then just talk. Hector answers in English and keeps listening.</div>
   <form id="typed"><input id="text" placeholder="…or type here" autocomplete="off"><button>Send</button></form>
 </footer>
 
 <script>
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const meter = document.getElementById('meter');
 const log = document.getElementById('log'), orb = document.getElementById('orb'), statusEl = document.getElementById('status');
 const player = new Audio(); player.playsInline = true;
 const SILENCE = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYyLjEyLjEwMgAAAAAAAAAAAAAA//NwwAAAAAAAAAAAAEluZm8AAAAPAAAABgAAAykAWlpaWlpaWlpaWlpaWlpaWnt7e3t7e3t7e3t7e3t7e3t7nJycnJycnJycnJycnJycnL29vb29vb29vb29vb29vb293t7e3t7e3t7e3t7e3t7e3t7/////////////////////AAAAAExhdmM2Mi4yOAAAAAAAAAAAAAAAACQCowAAAAAAAAMpEpf5vwAAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTQuMFVVVVVVVVVVVVVVVUxBTUU0LjBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVUxBTUU0LjBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQMSkAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVTEFNRTQuMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//NCxKMAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVTEFNRTQuMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//NAxKQAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80LEowAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=';
@@ -133,7 +135,7 @@ function stopRec() { active = false; clearTimeout(silenceTimer); clearInterval(v
 
 // iPhone path: record with the mic directly, detect the pause ourselves, transcribe on the server.
 const HEAR_URL = 'https://n8n.srv1508505.hstgr.cloud/webhook/hector-hear';
-let stream = null, actx = null, recorder = null, vadTimer = null;
+let stream = null, actx = null, recorder = null, vadTimer = null, finishNow = null;
 function stopStream() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } }
 const blobToBase64 = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(b); });
 
@@ -151,7 +153,7 @@ async function listenRecorder() {
   }
   if (!active || state !== 'listening') { stopStream(); return; }
   everStarted = true;
-  statusEl.textContent = "Go ahead, I'm listening… (mic is on)";
+  statusEl.textContent = 'Talk, then pause or tap the circle to send.';
   const an = actx.createAnalyser(); an.fftSize = 1024; actx.createMediaStreamSource(stream).connect(an);
   const buf = new Uint8Array(an.fftSize);
   const mime = MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
@@ -164,7 +166,7 @@ async function listenRecorder() {
   };
   startRecording();
   let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0, maxRms = 0, elapsed = 0, spokenMs = 0;
-  let noise = 0.01, noiseN = 0;   // background level, learned in the first half second
+  let noise = 0.01;   // background level: follows the quietest moments, so talking right away can't fool it
   const STEP = 50;
   vadTimer = setInterval(() => {
     if (!active || state !== 'listening') { clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); return; }
@@ -172,8 +174,9 @@ async function listenRecorder() {
     let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
     const rms = Math.sqrt(sum / buf.length);
     maxRms = Math.max(maxRms, rms); elapsed += STEP;
-    if (elapsed <= 500 && !speaking) { noise = (noise * noiseN + rms) / (noiseN + 1); noiseN++; }
-    const START = Math.max(0.02, noise * 3), KEEP = Math.max(0.012, noise * 1.8);   // start loud, but a softer voice still counts as talking
+    noise = rms < noise ? rms : Math.min(noise * 1.003, 0.02);
+    const START = Math.min(0.04, Math.max(0.012, noise * 2.5)), KEEP = Math.min(0.03, Math.max(0.008, noise * 1.5));
+    meter.style.width = Math.min(100, Math.round(rms * 600)) + '%';   // live mic level
     if (elapsed === 1500 && maxRms < 0.002) {            // no signal at all: the mic went to sleep, ask for a tap
       clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); active = false; return yourTurn();
     }
@@ -184,6 +187,8 @@ async function listenRecorder() {
     else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
   }, STEP);
 
+  let manual = false;
+  finishNow = () => { manual = true; clearInterval(vadTimer); finish(); };   // tapped: send whatever was said
   function finish() {
     recorder.onstop = async () => {
       stopStream();
@@ -195,7 +200,7 @@ async function listenRecorder() {
         const d = await r.json();
         if (interimEl) { interimEl.remove(); interimEl = null; }
         const text = (d.text || '').trim();
-        if (text) talk(text); else active ? listen() : setState('idle');
+        if (text) talk(text); else if (manual) { active = false; setState('idle'); } else active ? listen() : setState('idle');
       } catch (err) {
         if (interimEl) { interimEl.remove(); interimEl = null; }
         add('err', 'Error: ' + err.message);
@@ -285,6 +290,7 @@ async function talk(text) {
 
 orb.onclick = () => {
   unlockAudio();
+  if (state === 'listening' && finishNow) { const f = finishNow; finishNow = null; return f(); }   // done talking: send now (nothing said = stop)
   if (state === 'speaking') { active = true; audio && audio.pause(); if (IOS) { turn++; audio = null; } setState('listening'); return listen(); }
   if (state === 'idle') { active = true; return listen(); }
   stopRec(); setState('idle');   // tap while listening = stop
@@ -296,7 +302,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v15';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v16';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
