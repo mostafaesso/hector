@@ -248,6 +248,13 @@ async function talk(text) {
     history.push({ role: 'user', content: text }, { role: 'assistant', content: d.reply });
     history = history.slice(-12);
     const bubble = add('him', d.reply);
+    // Fixed replies (the memory steps) have their own recordings
+    const FIXED = { "What's the secret code, sir?": 'acks/teach_code.mp3', "Code accepted. What should I remember, sir?": 'acks/teach_what.mp3',
+      'Understood, sir.': 'acks/teach_done.mp3', "I'm afraid that's not it. Only Mr. Ali can add to my memory.": 'acks/teach_refuse.mp3' };
+    if (FIXED[d.reply]) {
+      await ackDone; if (my !== turn) return;
+      setState('speaking'); await play(await fetch(FIXED[d.reply]).then(r => r.blob()));
+    }
     // Voice every sentence at once, play them in order: the first one starts as soon as it's ready.
     const clips = (d.clips || []).map(voice);
     for (let i = 0; i < clips.length; i++) {
@@ -279,7 +286,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-document.getElementById('build').textContent = 'v9' + (IOS ? ' · iPhone mode' : '');
+document.getElementById('build').textContent = 'v10' + (IOS ? ' · iPhone mode' : '');
 document.addEventListener('visibilitychange', () => {   // stop listening when the tab is hidden
   if (document.hidden && active) { stopRec(); if (audio) audio.pause(); setState('idle'); }
 });
