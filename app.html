@@ -164,6 +164,7 @@ async function listenRecorder() {
   };
   startRecording();
   let speaking = false, loudMs = 0, quietMs = 0, idleMs = 0, maxRms = 0, elapsed = 0, spokenMs = 0;
+  let noise = 0.01, noiseN = 0;   // background level, learned in the first half second
   const STEP = 50;
   vadTimer = setInterval(() => {
     if (!active || state !== 'listening') { clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); return; }
@@ -171,13 +172,15 @@ async function listenRecorder() {
     let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
     const rms = Math.sqrt(sum / buf.length);
     maxRms = Math.max(maxRms, rms); elapsed += STEP;
+    if (elapsed <= 500 && !speaking) { noise = (noise * noiseN + rms) / (noiseN + 1); noiseN++; }
+    const START = Math.max(0.02, noise * 3), KEEP = Math.max(0.012, noise * 1.8);   // start loud, but a softer voice still counts as talking
     if (elapsed === 1500 && maxRms < 0.002) {            // no signal at all: the mic went to sleep, ask for a tap
       clearInterval(vadTimer); try { recorder.stop(); } catch (_) {} stopStream(); active = false; return yourTurn();
     }
-    if (rms > 0.03) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; if (speaking) spokenMs += STEP; } else { loudMs = 0; quietMs += STEP; }
+    if (rms > (speaking ? KEEP : START)) { loudMs += STEP; quietMs = 0; if (loudMs >= 150) speaking = true; if (speaking) spokenMs += STEP; } else { loudMs = 0; quietMs += STEP; }
     if (speaking && !interimEl) interimEl = add('me interim', '🎙️ …');
-    if (speaking && quietMs >= 1700 && spokenMs < 500) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
-    else if (speaking && quietMs >= 1700) { clearInterval(vadTimer); finish(); }      // a 1.7 second pause ends your turn
+    if (speaking && quietMs >= 2000 && spokenMs < 500) { speaking = false; spokenMs = 0; if (interimEl) { interimEl.remove(); interimEl = null; } try { recorder.stop(); } catch (_) {} startRecording(); }  // just a noise
+    else if (speaking && quietMs >= 2000) { clearInterval(vadTimer); finish(); }      // a 2 second pause ends your turn
     else if (!speaking && (idleMs += STEP) >= 10000) { idleMs = 0; try { recorder.stop(); } catch (_) {} startRecording(); }
   }, STEP);
 
@@ -293,7 +296,7 @@ document.getElementById('typed').onsubmit = e => {
   talk(v);
 };
 setState('idle');
-const BUILD = 'v14';  // bump on every published change; version.txt on the site must match
+const BUILD = 'v15';  // bump on every published change; version.txt on the site must match
 document.getElementById('build').textContent = BUILD + (IOS ? ' · iPhone mode' : '');
 // Check every minute whether a newer version is live, and offer a refresh
 const upd = document.getElementById('update');
